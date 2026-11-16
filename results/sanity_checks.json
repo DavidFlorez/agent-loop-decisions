@@ -1,0 +1,73 @@
+{
+  "sampling_counts": {
+    "pilot_points": 50,
+    "swe_sample_a": 299,
+    "swe_sample_b_default_only": 60,
+    "swe_sample_b_strict": 147,
+    "tb_sample_a": 290,
+    "tb_sample_b_default_only": 60,
+    "tb_sample_b_strict": 120
+  },
+  "swe_swelike": {
+    "cost_valid_runs": 6092,
+    "default_only_runs": 4318,
+    "fail_usd": 3011.308933,
+    "fail_usd_share": 0.5151851458568609,
+    "gemini_cli_default_only_fires": 340,
+    "gemini_cli_fires": 402,
+    "gemini_cli_strict_fires": 44,
+    "models": 13,
+    "openhands_default_only_fires": 0,
+    "openhands_strict_fires": 49,
+    "pass_rate": 0.4801108801108801,
+    "passed": 3464,
+    "runs": 7215,
+    "strict_closed": 19,
+    "strict_open": 133,
+    "strict_passed": 48,
+    "strict_runs": 152,
+    "strict_usd": 143.36592,
+    "strict_usd_share": 0.02452753739600484,
+    "total_usd": 5845.10046
+  },
+  "swe_turn_budgets": {
+    "deepseek-v4-pro": 125,
+    "fable-5": 96,
+    "glm-5.2": 198,
+    "gpt-5.6-luna": 25,
+    "gpt-5.6-sol": 33,
+    "grok-4.5": 89,
+    "mimo-v2.5-pro": 135,
+    "minimax-m3": 364,
+    "opus-5": 126,
+    "qwen3.5-35b-a3b": 164,
+    "qwen3.6-27b": 127,
+    "qwen3.6-35b-a3b": 133,
+    "sonnet-5": 133
+  },
+  "tb_terminus_2": {
+    "cost_valid_runs": 3267,
+    "default_only_runs": 3319,
+    "fail_usd": 1959.082301,
+    "fail_usd_share": 0.870863586289849,
+    "gemini_cli_default_only_fires": 58,
+    "gemini_cli_fires": 248,
+    "gemini_cli_strict_fires": 146,
+    "models": 29,
+    "openhands_default_only_fires": 4,
+    "openhands_strict_fires": 162,
+    "pass_rate": 0.32482278401605924,
+    "passed": 5178,
+    "runs": 15941,
+    "strict_closed": 77,
+    "strict_open": 188,
+    "strict_passed": 16,
+    "strict_runs": 265,
+    "strict_usd": 135.304557,
+    "strict_usd_share": 0.06014643275742164,
+    "total_usd": 2249.585735
+  },
+  "tb_turn_budgets": {
+    "terminus-2": 40
+  }
+}

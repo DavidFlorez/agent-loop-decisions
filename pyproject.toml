@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-loop-decisions"
+version = "0.1.0"
+description = "Offline replay evaluating Gemini Decision 1 as an AI agent loop-stopper against rule-based detectors"
+readme = "NOTES.md"
+requires-python = ">=3.13"
+dependencies = [
+    "google-genai>=3.2",
+    "huggingface_hub",
+    "pyarrow",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "orjson",
+    "scipy",
+    "pytest",
+    "tqdm",
+    "agent-loops @ git+https://github.com/DavidFlorez/agent-loops@5e29d42",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent_loop_decisions*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
