@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+import threading
+import time
 from typing import Any, Sequence
 
 import orjson
@@ -350,10 +353,58 @@ def _run_corpus_phase(
         max_retries=int(args.max_retries),
         backend=backend,
     )
+    workers = max(1, int(getattr(args, "workers", 1)))
+    t_start = time.monotonic()
     try:
-        for r in ordered:
-            evaluate_main_grid_run(r, traces[r.uid], client, window_steps=MAIN_WINDOW_STEPS)
-            evaluate_gemini_cli_arm(r, traces[r.uid], client)
+        if workers == 1:
+            for idx, r in enumerate(ordered, start=1):
+                evaluate_main_grid_run(r, traces[r.uid], client, window_steps=MAIN_WINDOW_STEPS)
+                evaluate_gemini_cli_arm(r, traces[r.uid], client)
+                if idx % 50 == 0 or idx == len(ordered):
+                    s = client.summary()
+                    print(
+                        f"[{corpus.upper()} {idx}/{len(ordered)} runs] "
+                        f"calls={s['session_api_calls']} hits={s['session_cache_hits']} "
+                        f"spent=${s['phase_spent_usd']:.4f} elapsed={time.monotonic() - t_start:.1f}s",
+                        flush=True,
+                    )
+        else:
+            tasks = [
+                (r, arm)
+                for r in sorted(ordered, key=lambda x: x.n_steps, reverse=True)
+                for arm in ("grid", "gcli")
+            ]
+            stop_event = threading.Event()
+
+            def _run_task(r: RunMetadata, arm: str) -> None:
+                if stop_event.is_set():
+                    return
+                tr = traces[r.uid]
+                if arm == "grid":
+                    evaluate_main_grid_run(r, tr, client, window_steps=MAIN_WINDOW_STEPS)
+                else:
+                    evaluate_gemini_cli_arm(r, tr, client)
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = {pool.submit(_run_task, r, arm): (r.uid, arm) for r, arm in tasks}
+                done_cnt = 0
+                try:
+                    for fut in as_completed(futs):
+                        fut.result()
+                        done_cnt += 1
+                        if done_cnt % 100 == 0 or done_cnt == len(futs):
+                            s = client.summary()
+                            print(
+                                f"[{corpus.upper()} {done_cnt}/{len(futs)} tasks] "
+                                f"calls={s['session_api_calls']} hits={s['session_cache_hits']} "
+                                f"spent=${s['phase_spent_usd']:.4f} elapsed={time.monotonic() - t_start:.1f}s",
+                                flush=True,
+                            )
+                except BaseException:
+                    stop_event.set()
+                    for pending in futs:
+                        pending.cancel()
+                    raise
     except CapExceededError as exc:
         client.flush()
         print(f"[CAP EXCEEDED] {exc}", file=sys.stderr)
@@ -390,6 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--rpm", type=int, default=DEFAULT_MAX_RPM)
             p.add_argument("--tpm", type=int, default=DEFAULT_MAX_TPM)
             p.add_argument("--max-retries", type=int, default=5)
+            p.add_argument("--workers", type=int, default=1)
 
     _add_common(sub.add_parser("plan", help="Verify corpus sanity and project costs (0 API calls)."))
     _add_common(sub.add_parser("pilot", help="Run 50-point pilot phase."), default_cap=DEFAULT_PHASE_CAPS_USD["pilot"])

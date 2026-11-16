@@ -206,7 +206,8 @@ class DecisionCache:
         return len(self._records)
 
     def get(self, key: str) -> dict[str, Any] | None:
-        return self._records.get(key)
+        with self._lock:
+            return self._records.get(key)
 
     def put(self, record: dict[str, Any]) -> None:
         key = record["key"]
@@ -259,11 +260,13 @@ class SpendTracker:
         }
 
     def phase_spent_usd(self, phase: str) -> float:
-        return float(self.state["by_phase"].get(phase, {}).get("spent_usd", 0.0))
+        with self._lock:
+            return float(self.state["by_phase"].get(phase, {}).get("spent_usd", 0.0))
 
     @property
     def total_spent_usd(self) -> float:
-        return float(self.state.get("total_spent_usd", 0.0))
+        with self._lock:
+            return float(self.state.get("total_spent_usd", 0.0))
 
     def record_call(self, phase: str, input_tokens: int, cost_usd: float, *, blocked: bool = False) -> None:
         with self._lock:
@@ -283,12 +286,16 @@ class SpendTracker:
                 ph["blocked"] = int(ph["blocked"]) + 1
             else:
                 ph["calls"] = int(ph["calls"]) + 1
-            self.save()
+            self._save_unlocked()
 
-    def save(self) -> None:
+    def _save_unlocked(self) -> None:
         tmp = self.path.with_suffix(".json.tmp")
         tmp.write_bytes(orjson.dumps(self.state, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS))
         tmp.replace(self.path)
+
+    def save(self) -> None:
+        with self._lock:
+            self._save_unlocked()
 
 
 class SlidingWindowRateLimiter:
@@ -375,9 +382,13 @@ class GuardedDecisionClient:
         self.spend = SpendTracker(cache_dir=cache_dir)
         self.limiter = SlidingWindowRateLimiter(max_rpm=max_rpm, max_tpm=max_tpm)
         self._backend = backend
-        self._genai_client: Any = None
+        self._thread_local = threading.local()
+        self._api_key: str | None = None
+        self._genai_clients: list[Any] = []
         self._backend_lock = threading.Lock()
         self._budget_lock = threading.Lock()
+        self._reserved_phase_usd = 0.0
+        self._reserved_total_usd = 0.0
         self.session_api_calls = 0
         self.session_cache_hits = 0
         self.session_blocked = 0
@@ -386,23 +397,30 @@ class GuardedDecisionClient:
         self.session_latencies_ms: list[float] = []
 
     def _get_backend(self) -> DecisionsBackend:
-        with self._backend_lock:
-            if self._backend is not None:
-                return self._backend
-            api_key = _resolve_gemini_api_key()
-            if not api_key:
-                raise RuntimeError("GEMINI_API_KEY is not set in .env, environment, or ~/.env.")
-            from google import genai
-
-            genai_client = genai.Client(
-                api_key=api_key,
-                http_options={"api_version": API_VERSION},
-            )
-            self._genai_client = genai_client
-            self._backend = genai_client.decisions
+        if self._backend is not None:
             return self._backend
+        tl_backend = getattr(self._thread_local, "backend", None)
+        if tl_backend is not None:
+            return tl_backend
+        with self._backend_lock:
+            if self._api_key is None:
+                api_key = _resolve_gemini_api_key()
+                if not api_key:
+                    raise RuntimeError("GEMINI_API_KEY is not set in .env, environment, or ~/.env.")
+                self._api_key = api_key
+            api_key = self._api_key
+        from google import genai
 
-    def summary(self) -> dict[str, Any]:
+        genai_client = genai.Client(
+            api_key=api_key,
+            http_options={"api_version": API_VERSION},
+        )
+        with self._backend_lock:
+            self._genai_clients.append(genai_client)
+        self._thread_local.backend = genai_client.decisions
+        return self._thread_local.backend
+
+    def _summary_unlocked(self) -> dict[str, Any]:
         return {
             "phase": self.phase,
             "phase_cap_usd": self.cap_usd,
@@ -417,9 +435,17 @@ class GuardedDecisionClient:
             "cache_size": len(self.cache),
         }
 
+    def summary(self) -> dict[str, Any]:
+        with self._budget_lock:
+            return self._summary_unlocked()
+
     def flush(self) -> None:
         self.spend.save()
         self.cache.export_gzip()
+
+    def _release_reservation_unlocked(self, est_cost: float) -> None:
+        self._reserved_phase_usd = max(0.0, self._reserved_phase_usd - est_cost)
+        self._reserved_total_usd = max(0.0, self._reserved_total_usd - est_cost)
 
     def decide(
         self,
@@ -433,7 +459,8 @@ class GuardedDecisionClient:
 
         cached = self.cache.get(key)
         if cached is not None:
-            self.session_cache_hits += 1
+            with self._budget_lock:
+                self.session_cache_hits += 1
             usage = cached.get("usage") or {}
             return DecisionCallResult(
                 cache_key=key,
@@ -456,127 +483,143 @@ class GuardedDecisionClient:
         with self._budget_lock:
             phase_spent = self.spend.phase_spent_usd(self.phase)
             total_spent = self.spend.total_spent_usd
-            if phase_spent + est_cost > self.cap_usd + 1e-12:
+            if phase_spent + self._reserved_phase_usd + est_cost > self.cap_usd + 1e-12:
                 self.flush()
                 raise CapExceededError(
                     f"Phase '{self.phase}' cap exceeded: spent=${phase_spent:.6f} + "
+                    f"reserved=${self._reserved_phase_usd:.6f} + "
                     f"est=${est_cost:.6f} > cap=${self.cap_usd:.6f}",
-                    summary=self.summary(),
+                    summary=self._summary_unlocked(),
                 )
-            if total_spent + est_cost > self.global_cap_usd + 1e-12:
+            if total_spent + self._reserved_total_usd + est_cost > self.global_cap_usd + 1e-12:
                 self.flush()
                 raise CapExceededError(
                     f"Global cap exceeded: total_spent=${total_spent:.6f} + "
+                    f"reserved=${self._reserved_total_usd:.6f} + "
                     f"est=${est_cost:.6f} > global_cap=${self.global_cap_usd:.6f}",
-                    summary=self.summary(),
+                    summary=self._summary_unlocked(),
                 )
+            self._reserved_phase_usd += est_cost
+            self._reserved_total_usd += est_cost
+            reserved = True
 
         backend = self._get_backend()
         last_err: Exception | None = None
-        for attempt in range(self.max_retries):
-            ev_ref = self.limiter.acquire(est_tokens)
-            t0 = time.perf_counter()
-            try:
-                res = backend.create(
-                    model=self.model,
-                    input=input_payload,
-                    questions=questions,
-                )
-                latency_ms = (time.perf_counter() - t0) * 1000.0
-                usage_obj = getattr(res, "usage", None)
-                total_in_tok = int(getattr(usage_obj, "total_input_tokens", 0) or 0)
-                self.limiter.update_tokens(ev_ref, total_in_tok)
-                real_cost = tokens_to_dollars(total_in_tok)
+        try:
+            for attempt in range(self.max_retries):
+                ev_ref = self.limiter.acquire(est_tokens)
+                t0 = time.perf_counter()
+                try:
+                    res = backend.create(
+                        model=self.model,
+                        input=input_payload,
+                        questions=questions,
+                    )
+                    latency_ms = (time.perf_counter() - t0) * 1000.0
+                    usage_obj = getattr(res, "usage", None)
+                    total_in_tok = int(getattr(usage_obj, "total_input_tokens", 0) or 0)
+                    self.limiter.update_tokens(ev_ref, total_in_tok)
+                    real_cost = tokens_to_dollars(total_in_tok)
 
-                raw_answers = getattr(res, "answers", None) or {}
-                norm_answers: dict[str, dict[str, Any]] = {}
-                for qk, ans in raw_answers.items():
-                    atype = getattr(ans, "type", "noul")
-                    entry: dict[str, Any] = {
-                        "type": atype,
-                        "confidence": float(getattr(ans, "confidence", 0.0)),
-                    }
-                    if hasattr(ans, "noul") and getattr(ans, "noul") is not None:
-                        entry["noul"] = float(getattr(ans, "noul"))
-                    if hasattr(ans, "choice") and getattr(ans, "choice") is not None:
-                        entry["choice"] = getattr(ans, "choice")
-                    if hasattr(ans, "score") and getattr(ans, "score") is not None:
-                        entry["score"] = float(getattr(ans, "score"))
-                    norm_answers[str(qk)] = entry
+                    raw_answers = getattr(res, "answers", None) or {}
+                    norm_answers: dict[str, dict[str, Any]] = {}
+                    for qk, ans in raw_answers.items():
+                        atype = getattr(ans, "type", "noul")
+                        entry: dict[str, Any] = {
+                            "type": atype,
+                            "confidence": float(getattr(ans, "confidence", 0.0)),
+                        }
+                        if hasattr(ans, "noul") and getattr(ans, "noul") is not None:
+                            entry["noul"] = float(getattr(ans, "noul"))
+                        if hasattr(ans, "choice") and getattr(ans, "choice") is not None:
+                            entry["choice"] = getattr(ans, "choice")
+                        if hasattr(ans, "score") and getattr(ans, "score") is not None:
+                            entry["score"] = float(getattr(ans, "score"))
+                        norm_answers[str(qk)] = entry
 
-                cache_record = {
-                    "key": key,
-                    "model": self.model,
-                    "status": "ok",
-                    "answers": norm_answers,
-                    "usage": {
-                        "total_input_tokens": total_in_tok,
-                        "total_output_tokens": 0,
-                    },
-                    "est_chars": est_chars,
-                    "est_tokens": est_tokens,
-                    "cost_usd": real_cost,
-                    "latency_ms": round(latency_ms, 2),
-                }
-                self.cache.put(cache_record)
-                self.spend.record_call(self.phase, total_in_tok, real_cost, blocked=False)
-                self.session_api_calls += 1
-                self.session_input_tokens += total_in_tok
-                self.session_spent_usd += real_cost
-                self.session_latencies_ms.append(latency_ms)
-
-                return DecisionCallResult(
-                    cache_key=key,
-                    status="ok",
-                    answers=norm_answers,
-                    total_input_tokens=total_in_tok,
-                    cost_usd=real_cost,
-                    est_chars=est_chars,
-                    est_tokens=est_tokens,
-                    latency_ms=latency_ms,
-                    cached=False,
-                )
-            except Exception as exc:
-                latency_ms = (time.perf_counter() - t0) * 1000.0
-                block_code, block_msg = _extract_safety_block(exc)
-                if block_code is not None:
                     cache_record = {
                         "key": key,
                         "model": self.model,
-                        "status": "blocked",
-                        "block_code": block_code,
-                        "block_message": block_msg,
-                        "answers": None,
-                        "usage": {"total_input_tokens": 0, "total_output_tokens": 0},
+                        "status": "ok",
+                        "answers": norm_answers,
+                        "usage": {
+                            "total_input_tokens": total_in_tok,
+                            "total_output_tokens": 0,
+                        },
                         "est_chars": est_chars,
                         "est_tokens": est_tokens,
-                        "cost_usd": 0.0,
+                        "cost_usd": real_cost,
                         "latency_ms": round(latency_ms, 2),
                     }
                     self.cache.put(cache_record)
-                    self.spend.record_call(self.phase, 0, 0.0, blocked=True)
-                    self.session_blocked += 1
+                    with self._budget_lock:
+                        self._release_reservation_unlocked(est_cost)
+                        reserved = False
+                        self.spend.record_call(self.phase, total_in_tok, real_cost, blocked=False)
+                        self.session_api_calls += 1
+                        self.session_input_tokens += total_in_tok
+                        self.session_spent_usd += real_cost
+                        self.session_latencies_ms.append(latency_ms)
+
                     return DecisionCallResult(
                         cache_key=key,
-                        status="blocked",
-                        answers=None,
-                        total_input_tokens=0,
-                        cost_usd=0.0,
+                        status="ok",
+                        answers=norm_answers,
+                        total_input_tokens=total_in_tok,
+                        cost_usd=real_cost,
                         est_chars=est_chars,
                         est_tokens=est_tokens,
                         latency_ms=latency_ms,
                         cached=False,
-                        block_code=block_code,
-                        block_message=block_msg,
                     )
+                except Exception as exc:
+                    latency_ms = (time.perf_counter() - t0) * 1000.0
+                    block_code, block_msg = _extract_safety_block(exc)
+                    if block_code is not None:
+                        cache_record = {
+                            "key": key,
+                            "model": self.model,
+                            "status": "blocked",
+                            "block_code": block_code,
+                            "block_message": block_msg,
+                            "answers": None,
+                            "usage": {"total_input_tokens": 0, "total_output_tokens": 0},
+                            "est_chars": est_chars,
+                            "est_tokens": est_tokens,
+                            "cost_usd": 0.0,
+                            "latency_ms": round(latency_ms, 2),
+                        }
+                        self.cache.put(cache_record)
+                        with self._budget_lock:
+                            self._release_reservation_unlocked(est_cost)
+                            reserved = False
+                            self.spend.record_call(self.phase, 0, 0.0, blocked=True)
+                            self.session_blocked += 1
+                        return DecisionCallResult(
+                            cache_key=key,
+                            status="blocked",
+                            answers=None,
+                            total_input_tokens=0,
+                            cost_usd=0.0,
+                            est_chars=est_chars,
+                            est_tokens=est_tokens,
+                            latency_ms=latency_ms,
+                            cached=False,
+                            block_code=block_code,
+                            block_message=block_msg,
+                        )
 
-                last_err = exc
-                if not _is_retryable_error(exc) or attempt >= self.max_retries - 1:
-                    self.flush()
-                    raise
-                backoff = min(60.0, (2.0**attempt) + random.uniform(0.1, 0.8))
-                time.sleep(backoff)
+                    last_err = exc
+                    if not _is_retryable_error(exc) or attempt >= self.max_retries - 1:
+                        self.flush()
+                        raise
+                    backoff = min(60.0, (2.0**attempt) + random.uniform(0.1, 0.8))
+                    time.sleep(backoff)
 
-        assert last_err is not None
-        self.flush()
-        raise last_err
+            assert last_err is not None
+            self.flush()
+            raise last_err
+        finally:
+            if reserved:
+                with self._budget_lock:
+                    self._release_reservation_unlocked(est_cost)

@@ -1141,6 +1141,22 @@ def update_notes_md(
     if not any_vis:
         lines.append("- _(Full Decision 1 charts pending `swe` / `tb` live API phases; example pilot window chart generated if pilot cache exists.)_")
 
+    corpora_done = set((analysis_meta or {}).get("corpora_analyzed") or [])
+    if {"swe", "tb"}.issubset(corpora_done):
+        next_step = (
+            "- All planned replay phases (`pilot`, `swe`, `tb`, `analyze`) are complete; "
+            "see `results/summary.md`, `audit/decision_vs_rules.md`, and `results/calibration_summary.json`. "
+            "Follow-up: test post-hoc Platt/isotonic probability recalibration or combined multi-question rules (`stuck` + `doomed`)."
+        )
+    elif corpora_done:
+        missing = [c for c in ("swe", "tb") if c not in corpora_done]
+        next_step = f"- Completed `{sorted(corpora_done)}`; remaining corpus: `{missing}`."
+    else:
+        next_step = (
+            "- Review Pilot measurements and re-projected budgets, then authorize `--cap` for "
+            "`swe` (`python -m agent_loop_decisions swe --cap ...`) and `tb` (`python -m agent_loop_decisions tb --cap ...`)."
+        )
+
     lines.extend(
         [
             "\n## Surprises and Limitations\n",
@@ -1148,7 +1164,7 @@ def update_notes_md(
             "- Terminal-Bench `trial_id` is not unique across `terminus-2` parquet rows (only 3,204 unique `trial_id`s across 15,941 rows); all internal joins use unique `(parquet_file_idx, row_idx)` identifiers (`tb::{file_idx}::{row_idx}`).",
             "- Production Gemini CLI uses a generative Gemini model for its `LLM_LOOP_CHECK`; here Decision 1 `unproductive_loop` (`noul`) acts as a calibrated stand-in.",
             "\n## Open Questions / Next Steps\n",
-            "- Review Pilot measurements and re-projected budgets, then authorize `--cap` for `swe` (`python -m agent_loop_decisions swe --cap ...`) and `tb` (`python -m agent_loop_decisions tb --cap ...`).",
+            next_step,
         ]
     )
     notes_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

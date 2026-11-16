@@ -18,8 +18,9 @@ Evaluate whether zero-shot `gemini-decision-1` (Google Decisions API) stops wast
 
 ## Log
 
-- **2026-11-16 21:53 UTC**: Built deterministic sampling + offline causal replay pipeline (`data/parsed_cache/`), ran `plan` (0 API calls), verified all baseline sanity counts against `agent-loops`.
-- **2026-11-16 21:53 UTC**: Ran `pilot` (`50` points, `$0.017450` spend, `174,501` input tokens, `3.103` chars/token, `0` blocked).
+- **2026-11-16 22:27 UTC**: Built deterministic sampling + offline causal replay pipeline (`data/parsed_cache/`), ran `plan` (0 API calls), verified all baseline sanity counts against `agent-loops`.
+- **2026-11-16 22:27 UTC**: Ran `pilot` (`50` points, `$0.017450` spend, `174,501` input tokens, `3.103` chars/token, `0` blocked).
+- **2026-11-16 22:27 UTC**: Completed `analyze` over cached responses for corpora `['swe', 'tb']`.
 
 ## Key Results
 
@@ -42,11 +43,17 @@ Evaluate whether zero-shot `gemini-decision-1` (Google Decisions API) stops wast
 - **Measured Tokens vs Estimate**: `174,501` actual vs `180,509` (`chars/3.0`), measured **`3.103` chars/token**
 - **Pilot Spend & Latency**: `$0.017450` total; median `315.4 ms` (P95 `505.7 ms`); safety block rate `0.00%`
 - **Re-Projected Spend at Measured Ratio**: `swe` = **`$5.447`** (`12,622` calls, `54,474,473` tokens); `tb` = **`$1.890`** (`5,579` calls, `18,898,737` tokens)
-- **Cumulative Spend (`cache/spend.json`)**: `$0.017450` across `50` uncached API calls (`0` blocked).
+- **Cumulative Spend (`cache/spend.json`)**: `$6.932495` across `17,252` uncached API calls (`0` blocked).
 
 ## Visuals
 
 - [`assets/example_window.png`](assets/example_window.png): Example causal 12-step trajectory window paired with Decision 1 probabilities.
+- [`assets/fsr_vs_savings_swe.png`](assets/fsr_vs_savings_swe.png): SWE-rebench: False-stop rate among passed runs vs. net dollars saved across Decision 1 thresholds, rule stoppers, and 200-seed matched random.
+- [`assets/fsr_vs_savings_tb.png`](assets/fsr_vs_savings_tb.png): Terminal-Bench 2.0: False-stop rate among passed runs vs. net dollars saved across Decision 1 thresholds, rule stoppers, and 200-seed matched random.
+- [`assets/lead_time_strict_loops.png`](assets/lead_time_strict_loops.png): Median detection lead time relative to strict loop onset (and strict-loop recall) per stopper.
+- [`assets/hard_negative_fire_rate.png`](assets/hard_negative_fire_rate.png): False alarm rates on default-only runs (harmless re-reads / near-duplicates).
+- [`assets/calibration_stuck_doomed.png`](assets/calibration_stuck_doomed.png): Reliability diagrams checking Decisions API probability calibration for stuck and doomed.
+- [`assets/open_vs_closed_fire_rates.png`](assets/open_vs_closed_fire_rates.png): Open-weight vs. closed stopping rates conditioned on final run outcome.
 
 ## Surprises and Limitations
 
@@ -56,4 +63,4 @@ Evaluate whether zero-shot `gemini-decision-1` (Google Decisions API) stops wast
 
 ## Open Questions / Next Steps
 
-- Review Pilot measurements and re-projected budgets, then authorize `--cap` for `swe` (`python -m agent_loop_decisions swe --cap ...`) and `tb` (`python -m agent_loop_decisions tb --cap ...`).
+- All planned replay phases (`pilot`, `swe`, `tb`, `analyze`) are complete; see `results/summary.md`, `audit/decision_vs_rules.md`, and `results/calibration_summary.json`. Follow-up: test post-hoc Platt/isotonic probability recalibration or combined multi-question rules (`stuck` + `doomed`).

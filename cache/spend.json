@@ -5,10 +5,22 @@
       "calls": 50,
       "input_tokens": 174501,
       "spent_usd": 0.0174501
+    },
+    "swe": {
+      "blocked": 0,
+      "calls": 11926,
+      "input_tokens": 49519995,
+      "spent_usd": 4.951999499999976
+    },
+    "tb": {
+      "blocked": 0,
+      "calls": 5276,
+      "input_tokens": 19630458,
+      "spent_usd": 1.9630458000000028
     }
   },
   "total_blocked": 0,
-  "total_calls": 50,
-  "total_input_tokens": 174501,
-  "total_spent_usd": 0.0174501
+  "total_calls": 17252,
+  "total_input_tokens": 69324954,
+  "total_spent_usd": 6.932495399999988
 }

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +15,7 @@ from agent_loop_decisions.client import (
     DecisionCache,
     GuardedDecisionClient,
     compute_cache_key,
+    estimate_request_chars,
     estimate_tokens_from_chars,
     tokens_to_dollars,
 )
@@ -171,3 +174,46 @@ def test_compat_errors_status_code_and_body(tmp_path: Path, monkeypatch: pytest.
     assert res.status == "blocked"
     assert res.block_code == "safety"
     assert len(backend.calls) == 2
+
+
+def test_concurrent_budget_reservation_prevents_overrun(tmp_path: Path) -> None:
+    sample_text = "x" * 600
+    est_tok = estimate_tokens_from_chars(
+        estimate_request_chars([{"type": "text", "text": sample_text}], MAIN_QUESTIONS)
+    )
+    est_cost = tokens_to_dollars(est_tok)
+    cap_usd = est_cost * 2.4  # fits 2 concurrent calls, rejects a 3rd
+
+    class _SlowBackend:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create(self, *, model: str, input: object, questions: dict) -> object:
+            time.sleep(0.05)
+            self.calls += 1
+            return _ok_resp(tokens=int(est_tok))
+
+    client = GuardedDecisionClient(
+        phase="swe",
+        cap_usd=cap_usd,
+        global_cap_usd=10.0,
+        cache_dir=tmp_path,
+        max_rpm=10_000,
+        max_tpm=10_000_000,
+        backend=_SlowBackend(),
+    )
+
+    def _worker(idx: int) -> str:
+        try:
+            res = client.decide(shared_text=f"{sample_text}_{idx}", questions=MAIN_QUESTIONS)
+            return res.status
+        except CapExceededError:
+            return "cap"
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        outcomes = list(pool.map(_worker, range(6)))
+
+    assert outcomes.count("ok") == 2
+    assert outcomes.count("cap") == 4
+    assert client.spend.phase_spent_usd("swe") <= cap_usd + 1e-12
+
