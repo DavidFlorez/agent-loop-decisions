@@ -151,3 +151,23 @@ def test_retry_on_429_and_503(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert res.status == "ok"
     assert res.total_input_tokens == 5000
     assert len(backend.calls) == 3
+
+
+class _CompatStatusError(Exception):
+    def __init__(self, status_code: int, body: object, message: str = "error") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
+        self.message = message
+
+
+def test_compat_errors_status_code_and_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    e429 = _CompatStatusError(429, {"error": {"code": 429, "message": "rate limit"}})
+    block = _CompatStatusError(400, '{"error": {"code": "safety", "message": "blocked"}}')
+    backend = _FakeBackend([e429, block])
+    client = GuardedDecisionClient(phase="pilot", cap_usd=0.25, cache_dir=tmp_path, backend=backend)
+    res = client.decide(shared_text="compat error test", questions=MAIN_QUESTIONS)
+    assert res.status == "blocked"
+    assert res.block_code == "safety"
+    assert len(backend.calls) == 2

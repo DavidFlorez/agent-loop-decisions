@@ -1,6 +1,6 @@
 # agent-loop-decisions — Results Summary
 
-_Generated: 2026-11-16 21:27 UTC_
+_Generated: 2026-11-16 21:53 UTC_
 
 ## 1. Corpus Sanity Checks
 
@@ -20,6 +20,13 @@ _Generated: 2026-11-16 21:27 UTC_
 | `tb` | `main_grid` | `sample_b_strict` | 120 | 2,543 | 23,901,520 | 8,489,336 | $0.8489 |
 | `tb` | `main_grid` | `sample_b_default_only` | 60 | 671 | 6,172,546 | 2,195,294 | $0.2195 |
 | `tb` | `gemini_cli_llm_approx` | `all_sampled` | 470 | 914 | 14,013,851 | 4,861,091 | $0.4861 |
+
+## 3. Pilot Calibration (`results/pilot_report.md`)
+
+- **Calls**: `50` (`50` ok, `0` blocked)
+- **Tokens (`actual` vs `chars/3.0`)**: `174,501` vs `180,509` (`3.103` chars/token)
+- **Spend**: `$0.017450`; Latency median `315.4 ms` (P95 `505.7 ms`)
+- **Re-projected Phase Spend**: `swe` `$5.447`, `tb` `$1.890`
 
 ## Free Rule Baselines (`swe` full corpus)
 
@@ -55,4 +62,4 @@ _Generated: 2026-11-16 21:27 UTC_
 
 ## Spend Tracking (`cache/spend.json`)
 
-- **Total Spent**: `$0.000000` / `$10.00` global cap (`0` calls, `0` blocked)
+- **Total Spent**: `$0.017450` / `$10.00` global cap (`50` calls, `0` blocked)

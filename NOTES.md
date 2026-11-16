@@ -18,7 +18,8 @@ Evaluate whether zero-shot `gemini-decision-1` (Google Decisions API) stops wast
 
 ## Log
 
-- **2026-11-16 21:27 UTC**: Built deterministic sampling + offline causal replay pipeline (`data/parsed_cache/`), ran `plan` (0 API calls), verified all baseline sanity counts against `agent-loops`.
+- **2026-11-16 21:53 UTC**: Built deterministic sampling + offline causal replay pipeline (`data/parsed_cache/`), ran `plan` (0 API calls), verified all baseline sanity counts against `agent-loops`.
+- **2026-11-16 21:53 UTC**: Ran `pilot` (`50` points, `$0.017450` spend, `174,501` input tokens, `3.103` chars/token, `0` blocked).
 
 ## Key Results
 
@@ -35,11 +36,17 @@ Evaluate whether zero-shot `gemini-decision-1` (Google Decisions API) stops wast
 | `tb` | `main_grid` | `sample_b_strict` | 120 | 2,543 | 8,489,336 | $0.8489 |
 | `tb` | `main_grid` | `sample_b_default_only` | 60 | 671 | 2,195,294 | $0.2195 |
 | `tb` | `gemini_cli_llm_approx` | `all_sampled` | 470 | 914 | 4,861,091 | $0.4861 |
-- **Cumulative Spend (`cache/spend.json`)**: `$0.000000` across `0` uncached API calls (`0` blocked).
+
+### Pilot Results (`results/pilot_report.md`)
+
+- **Measured Tokens vs Estimate**: `174,501` actual vs `180,509` (`chars/3.0`), measured **`3.103` chars/token**
+- **Pilot Spend & Latency**: `$0.017450` total; median `315.4 ms` (P95 `505.7 ms`); safety block rate `0.00%`
+- **Re-Projected Spend at Measured Ratio**: `swe` = **`$5.447`** (`12,622` calls, `54,474,473` tokens); `tb` = **`$1.890`** (`5,579` calls, `18,898,737` tokens)
+- **Cumulative Spend (`cache/spend.json`)**: `$0.017450` across `50` uncached API calls (`0` blocked).
 
 ## Visuals
 
-- _(Full Decision 1 charts pending `swe` / `tb` live API phases; example pilot window chart generated if pilot cache exists.)_
+- [`assets/example_window.png`](assets/example_window.png): Example causal 12-step trajectory window paired with Decision 1 probabilities.
 
 ## Surprises and Limitations
 

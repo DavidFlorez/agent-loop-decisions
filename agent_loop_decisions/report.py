@@ -497,7 +497,7 @@ def generate_example_window_chart(
     # Truncate lines cleanly so text renders legibly in left pane
     wrapped_lines: list[str] = []
     for raw_ln in prompt_text.splitlines():
-        ln = raw_ln.strip()
+        ln = raw_ln.expandtabs(2).strip()
         if not ln:
             wrapped_lines.append("")
             continue

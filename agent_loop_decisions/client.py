@@ -105,16 +105,32 @@ def tokens_to_dollars(tokens: float) -> float:
     return (float(tokens) / 1_000_000.0) * PRICE_PER_M_INPUT_TOKENS_USD
 
 
+def _error_status_code(err: Exception) -> int | None:
+    """Return HTTP status code from google-genai compat_errors (.status_code) or mock/SDK (.code)."""
+    for attr in ("status_code", "code"):
+        val = getattr(err, attr, None)
+        if isinstance(val, int):
+            return val
+    return None
+
+
 def _extract_safety_block(err: Exception) -> tuple[str | None, str | None]:
     """Return (code, message) if err is an HTTP 400 safety-filter block, else (None, None)."""
-    status_code = getattr(err, "code", None)
+    status_code = _error_status_code(err)
     if status_code != 400:
         return None, None
-    details = getattr(err, "details", None)
+    payload = getattr(err, "details", None)
+    if payload is None:
+        payload = getattr(err, "body", None)
+    if isinstance(payload, str):
+        try:
+            payload = orjson.loads(payload)
+        except orjson.JSONDecodeError:
+            payload = None
     err_code: str | None = None
     err_msg: str | None = getattr(err, "message", None)
-    if isinstance(details, dict):
-        inner = details.get("error") if isinstance(details.get("error"), dict) else details
+    if isinstance(payload, dict):
+        inner = payload.get("error") if isinstance(payload.get("error"), dict) else payload
         raw_code = inner.get("code")
         if isinstance(raw_code, str):
             err_code = raw_code.strip().lower()
@@ -127,9 +143,9 @@ def _extract_safety_block(err: Exception) -> tuple[str | None, str | None]:
 
 def _is_retryable_error(err: Exception) -> bool:
     """Return True for HTTP 429, HTTP 5xx, or transient transport/timeout failures."""
-    code = getattr(err, "code", None)
-    if isinstance(code, int):
-        if code == 429 or 500 <= code < 600:
+    code = _error_status_code(err)
+    if code is not None:
+        if code in (408, 429) or 500 <= code < 600:
             return True
         if 400 <= code < 500:
             return False

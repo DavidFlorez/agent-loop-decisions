@@ -1,7 +1,14 @@
 {
-  "by_phase": {},
+  "by_phase": {
+    "pilot": {
+      "blocked": 0,
+      "calls": 50,
+      "input_tokens": 174501,
+      "spent_usd": 0.0174501
+    }
+  },
   "total_blocked": 0,
-  "total_calls": 0,
-  "total_input_tokens": 0,
-  "total_spent_usd": 0.0
+  "total_calls": 50,
+  "total_input_tokens": 174501,
+  "total_spent_usd": 0.0174501
 }
